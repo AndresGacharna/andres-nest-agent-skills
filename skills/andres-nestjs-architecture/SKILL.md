@@ -41,6 +41,7 @@ src/
     ├── controllers/<feature>.controller.ts
     ├── dto/create-<feature>.dto.ts, update-<feature>.dto.ts
     ├── entities/<feature>.entity.ts
+    ├── interfaces/              opcional: tipos internos que no cruzan HTTP
     └── services/<feature>.service.ts
 ```
 
@@ -53,6 +54,8 @@ Plantilla completa de un módulo: [references/module-template.md](references/mod
 - Los imports relativos terminan en `.js`: `import { X } from './x.service.js'`.
 - Las relaciones de TypeORM se tipan con `Relation<T>`.
 - Orden de imports: paquetes externos, línea en blanco, imports relativos.
+- Tipos que solo se usan como tipo: `import type { X }`. Se borran al compilar y no crean dependencias entre archivos.
+- ❌ Barrels (`index.ts` que reexporta una carpeta): cada import apunta al archivo. Un barrel arrastra todo lo de la carpeta y esconde ciclos entre módulos, que en ESM terminan en `Cannot access 'X' before initialization`.
 
 ### Controladores
 
@@ -174,6 +177,24 @@ export class SupplierController {
 - `message` de error es un `string[]` cuando el error viene de `ValidationPipe`. `path` no incluye el query string.
 - No agregar `timestamp` ni `path` a las respuestas exitosas: el cliente ya los conoce. En los errores sirven para cruzar un error reportado con los logs.
 - Campos sensibles en entidades: `@Exclude()` de `class-transformer`. El `ClassSerializerInterceptor` global lo aplica en consultas y acciones.
+- **Entidad o response DTO:**
+  - CRUD simple: devolver la entidad, con `@Exclude()` en lo que no debe salir.
+  - Response DTO (`<feature>/dto/<feature>-response.dto.ts`) cuando el recurso tiene campos calculados o de relaciones, o datos sensibles (usuarios, credenciales). Ahí una lista explícita de lo que sale es más segura que acordarse del `@Exclude()` en cada columna nueva.
+  - Mapeo con una función (`toSupplierResponse(entity)`) o `plainToInstance(Dto, entity, { excludeExtraneousValues: true })` + `@Expose()`. Sin automapper.
+  - ❌ Decoradores de `class-validator` en un DTO de respuesta: la validación solo corre sobre lo que entra.
+
+### DTOs, interfaces y dónde vive cada tipo
+
+- **Clase en `dto/`** cuando algo la usa en tiempo de ejecución:
+  - lo que entra y se valida (`@Body()`, `@Query()`, `@Param()`) con `class-validator`;
+  - lo que se transforma con `class-transformer` (`@Expose({ name: 'access_token' })` al leer la respuesta de un servicio externo, `@Exclude()`);
+  - lo que documentará Swagger (`@ApiProperty` necesita clases).
+- **Interfaz en `interfaces/`** cuando es solo un tipo en tiempo de compilación: formas internas que nunca son body de entrada ni de salida (datos armados entre dos métodos, el sobre que produce un interceptor o un filtro). Una clase sin decoradores no aporta nada.
+- Carpeta `dto/` en singular. Nombres: `create-<feature>.dto.ts`, `<feature>-response.dto.ts`, y para respuestas de APIs externas el nombre del proveedor (`<provider>-token-response.dto.ts`).
+- **El tipo vive con quien lo define, no con quien lo usa primero.** Si algo de `common/` produce una forma (el sobre `{ token, nonce, exp }` de una utilidad de cifrado, el `MessageResponse` del interceptor), su interfaz va en `common/` junto a ese código, aunque hoy solo la consuma `auth`. Así `common/` nunca importa de un módulo de negocio y no se forma el ciclo `common → auth → common`.
+- Si un tipo lo necesitan dos módulos de negocio, lo exporta el módulo dueño del concepto y el otro lo importa en esa dirección. Se mueve a `common/` solo si de verdad es transversal.
+- Lo de otra integración no se mete en `auth` por parecerse: el login de clientes externos (`clientId`/`clientSecret`) va en su propio módulo.
+- `MessageResponse`, `ApiErrorResponse` y `ErrorDefinition` son interfaces porque nadie los instancia ni valida. Cuando se agregue Swagger, `ApiErrorResponse` pasa a clase con `@ApiProperty`; `MessageResponse<T>` necesita además un decorador helper (`ApiExtraModels` + `getSchemaPath`), porque Swagger no entiende genéricos de clase.
 
 ### Configuración
 
