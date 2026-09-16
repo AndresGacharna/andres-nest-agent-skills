@@ -2,25 +2,13 @@
 
 CRUD completo siguiendo la arquitectura base. Reemplazar `company` / `Company` por el nombre del dominio.
 
-## `company/constants/company.errors.ts`
+## `company/constants/company.exception-response.ts`
 
 ```ts
-import { HttpStatus } from '@nestjs/common';
-
-import type { ErrorDefinition } from '../../common/interfaces/error-definition.interface.js';
-
-export const CompanyErrors = {
-  NOT_FOUND: {
-    code: 'COMPANY_NOT_FOUND',
-    message: 'Company not found',
-    status: HttpStatus.NOT_FOUND,
-  },
-  IDENTIFICATION_TAKEN: {
-    code: 'COMPANY_IDENTIFICATION_TAKEN',
-    message: 'A company with this identification already exists',
-    status: HttpStatus.CONFLICT,
-  },
-} as const satisfies Record<string, ErrorDefinition>;
+export const CompanyExceptionResponse = {
+  NOT_FOUND: 'Company not found',
+  IDENTIFICATION_TAKEN: 'A company with this identification already exists',
+} as const;
 ```
 
 ## `company/constants/company.messages.ts`
@@ -78,12 +66,12 @@ export class UpdateCompanyDto extends PartialType(CreateCompanyDto) {}
 ## `company/services/company.service.ts`
 
 ```ts
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { DomainException } from '../../common/exceptions/domain.exception.js';
-import { CompanyErrors } from '../constants/company.errors.js';
+import { CompanyExceptionResponse } from '../constants/company.exception-response.js';
 import { CreateCompanyDto } from '../dto/create-company.dto.js';
 import { UpdateCompanyDto } from '../dto/update-company.dto.js';
 import { Company } from '../entities/company.entity.js';
@@ -102,7 +90,7 @@ export class CompanyService {
   async findOne(id: string): Promise<Company> {
     const company = await this.companyRepository.findOneBy({ id });
     if (!company) {
-      throw new DomainException(CompanyErrors.NOT_FOUND);
+      throw new DomainException(HttpStatus.NOT_FOUND, CompanyExceptionResponse.NOT_FOUND);
     }
     return company;
   }
@@ -115,7 +103,7 @@ export class CompanyService {
   async update(id: string, dto: UpdateCompanyDto): Promise<Company> {
     const company = await this.companyRepository.preload({ id, ...dto });
     if (!company) {
-      throw new DomainException(CompanyErrors.NOT_FOUND);
+      throw new DomainException(HttpStatus.NOT_FOUND, CompanyExceptionResponse.NOT_FOUND);
     }
     return this.companyRepository.save(company);
   }
@@ -123,16 +111,19 @@ export class CompanyService {
   async remove(id: string): Promise<void> {
     const { affected } = await this.companyRepository.delete(id);
     if (!affected) {
-      throw new DomainException(CompanyErrors.NOT_FOUND);
+      throw new DomainException(HttpStatus.NOT_FOUND, CompanyExceptionResponse.NOT_FOUND);
     }
   }
 
   // Optional: the unique index already yields a generic 409 (UNIQUE_VIOLATION);
-  // checking first gives the client a module-specific code.
+  // checking first gives the client a module-specific message.
   private async ensureIdentificationIsFree(identification: string): Promise<void> {
     const exists = await this.companyRepository.existsBy({ identification });
     if (exists) {
-      throw new DomainException(CompanyErrors.IDENTIFICATION_TAKEN);
+      throw new DomainException(
+        HttpStatus.CONFLICT,
+        CompanyExceptionResponse.IDENTIFICATION_TAKEN,
+      );
     }
   }
 }
@@ -313,7 +304,6 @@ export class CompanyModule {}
 ```json
 {
   "statusCode": 404,
-  "code": "COMPANY_NOT_FOUND",
   "message": "Company not found",
   "timestamp": "2026-09-15T15:00:00.000Z",
   "path": "/api/v1/companies/..."
@@ -324,7 +314,6 @@ export class CompanyModule {}
 ```json
 {
   "statusCode": 400,
-  "code": "VALIDATION_ERROR",
   "message": ["identification should not be empty", "identification must be a string", "..."],
   "timestamp": "2026-09-15T15:00:00.000Z",
   "path": "/api/v1/companies"

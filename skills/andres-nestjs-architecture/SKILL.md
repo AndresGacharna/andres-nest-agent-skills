@@ -28,15 +28,15 @@ src/
 │   └── database.config.ts       buildTypeOrmOptions(config)
 ├── common/                      solo lo transversal, sin lógica ni textos de negocio
 │   ├── common.module.ts         APP_FILTER + APP_INTERCEPTOR
-│   ├── constants/               common.errors.ts, postgres-error-codes.ts
+│   ├── constants/               common.exception-response.ts, postgres-error-codes.ts
 │   ├── decorators/              @ResponseMessage()
 │   ├── exceptions/              DomainException
 │   ├── filters/                 AllExceptionsFilter
 │   ├── interceptors/            LoggingInterceptor, ResponseMessageInterceptor
-│   └── interfaces/              MessageResponse, ApiErrorResponse, ErrorDefinition
+│   └── interfaces/              MessageResponse, ApiErrorResponse
 └── <feature>/                   un módulo por dominio (company, supplier, ...)
     ├── <feature>.module.ts
-    ├── constants/<feature>.errors.ts
+    ├── constants/<feature>.exception-response.ts
     ├── constants/<feature>.messages.ts
     ├── controllers/<feature>.controller.ts
     ├── dto/create-<feature>.dto.ts, update-<feature>.dto.ts
@@ -72,31 +72,33 @@ Plantilla completa de un módulo: [references/module-template.md](references/mod
 ### Servicios
 
 - ✅ Devolver el recurso creado o actualizado (o `void` si no hay nada que devolver). El mensaje de éxito lo agrega el controlador con `@ResponseMessage`, nunca el servicio.
-- ✅ Recurso inexistente: `throw new DomainException(<Feature>Errors.NOT_FOUND)`.
-- ✅ Regla de negocio violada: `throw new DomainException(<Feature>Errors.<CASO>)`.
+- ✅ Recurso inexistente: `throw new DomainException(HttpStatus.NOT_FOUND, <Feature>ExceptionResponse.NOT_FOUND)`.
+- ✅ Regla de negocio violada: `throw new DomainException(HttpStatus.<STATUS>, <Feature>ExceptionResponse.<CASO>)`.
 - ✅ Un `try/catch` solo si se va a **recuperar** algo (reintento, fallback, procesar un lote parcial). Si solo se va a relanzar, no se escribe.
 - ✅ `return` para resultados esperados aunque no sean el caso feliz (`null`, `boolean`, resultados parciales); `throw` solo cuando la petición no puede continuar.
 - ❌ `return '<Recurso> creado exitosamente'` (o una clase `ServiceResponse`): el mensaje va en el controlador.
 - ❌ `throw new BadRequestException(error.message)` con el mensaje de un error desconocido: filtra detalles internos.
-- ❌ Comparar `error.message === '...'` para decidir: usar `error instanceof DomainException && error.code === X.code`.
+- ❌ Comparar `error.message === '...'` para decidir: si el flujo depende de ese caso, el servicio lo devuelve como resultado (`null`, `boolean`) en vez de lanzarlo.
 
 ### Errores
 
-- Catálogo por módulo en `<feature>/constants/<feature>.errors.ts`:
+- `DomainException(status, message)`: el status de `HttpStatus` y el texto que el frontend muestra.
+- Catálogo de mensajes por módulo en `<feature>/constants/<feature>.exception-response.ts`:
   ```ts
-  export const SupplierErrors = {
-    NOT_FOUND: {
-      code: 'SUPPLIER_NOT_FOUND',
-      message: 'Supplier not found',
-      status: HttpStatus.NOT_FOUND,
-    },
-  } as const satisfies Record<string, ErrorDefinition>;
+  export const SupplierExceptionResponse = {
+    NOT_FOUND: 'Supplier not found',
+    TAX_ID_TAKEN: 'A supplier with this tax id already exists',
+  } as const;
   ```
-- `message`: texto personalizado que el frontend muestra.
-- `code`: `SCREAMING_SNAKE_CASE` con el **prefijo del módulo** (`SUPPLIER_`, `COST_CENTER_`) para que sea único en toda la API. Cuando el frontend o el back necesiten **decidir** algo según el error, se usa `code`, nunca `message`.
-- Mensaje dinámico: `new DomainException(SupplierErrors.NOT_FOUND, \`Supplier ${id} not found\`)`. El `code` y el status no cambian.
-- `common/constants/common.errors.ts` es solo para errores transversales. No agregar errores de negocio ahí.
-- Duplicados (23505) y claves foráneas (23503) de Postgres ya se traducen a 409 en el filtro. Validar antes en el servicio solo si se necesita un `code` específico del módulo.
+  ```ts
+  throw new DomainException(HttpStatus.NOT_FOUND, SupplierExceptionResponse.NOT_FOUND);
+  ```
+- El mensaje va en el catálogo cuando se repite o es parte del contrato con el frontend. Si es de un solo uso o dinámico, se escribe en línea: `new DomainException(HttpStatus.NOT_FOUND, \`Supplier ${id} not found\`)`.
+- Si el error envuelve otro (una llamada HTTP, una librería), pasar el original como causa: `new DomainException(status, message, { cause: error })`. No se muestra al cliente, pero sirve para decidir y para depurar.
+- La respuesta de error no lleva `code`. Para decidir según el error, el frontend usa `statusCode`, nunca `message`.
+- `common/constants/common.exception-response.ts` es solo para mensajes transversales. No agregar mensajes de negocio ahí.
+- Duplicados (23505) y claves foráneas (23503) de Postgres ya se traducen a 409 con un mensaje genérico en el filtro. Validar antes en el servicio solo si se necesita un mensaje específico del módulo.
+- Las excepciones 5xx que no son `DomainException` responden un mensaje genérico: el detalle queda en el log.
 
 ### Mensajes de éxito
 
@@ -172,7 +174,7 @@ export class SupplierController {
 | Consulta (`GET` o `POST` de búsqueda) | El resultado tal cual: entidad, arreglo o `{ page, size, count, rows }` |
 | Acción que devuelve algo | `{ "message": "...", "data": ... }` |
 | Acción que no devuelve nada (`void`) | `{ "message": "..." }` |
-| Error | `{ "statusCode", "code", "message", "timestamp", "path" }` |
+| Error | `{ "statusCode", "message", "timestamp", "path" }` |
 
 - `message` de error es un `string[]` cuando el error viene de `ValidationPipe`. `path` no incluye el query string.
 - No agregar `timestamp` ni `path` a las respuestas exitosas: el cliente ya los conoce. En los errores sirven para cruzar un error reportado con los logs.
@@ -194,7 +196,7 @@ export class SupplierController {
 - **El tipo vive con quien lo define, no con quien lo usa primero.** Si algo de `common/` produce una forma (el sobre `{ token, nonce, exp }` de una utilidad de cifrado, el `MessageResponse` del interceptor), su interfaz va en `common/` junto a ese código, aunque hoy solo la consuma `auth`. Así `common/` nunca importa de un módulo de negocio y no se forma el ciclo `common → auth → common`.
 - Si un tipo lo necesitan dos módulos de negocio, lo exporta el módulo dueño del concepto y el otro lo importa en esa dirección. Se mueve a `common/` solo si de verdad es transversal.
 - Lo de otra integración no se mete en `auth` por parecerse: el login de clientes externos (`clientId`/`clientSecret`) va en su propio módulo.
-- `MessageResponse`, `ApiErrorResponse` y `ErrorDefinition` son interfaces porque nadie los instancia ni valida. Cuando se agregue Swagger, `ApiErrorResponse` pasa a clase con `@ApiProperty`; `MessageResponse<T>` necesita además un decorador helper (`ApiExtraModels` + `getSchemaPath`), porque Swagger no entiende genéricos de clase.
+- `MessageResponse` y `ApiErrorResponse` son interfaces porque nadie los instancia ni valida. Cuando se agregue Swagger, `ApiErrorResponse` pasa a clase con `@ApiProperty`; `MessageResponse<T>` necesita además un decorador helper (`ApiExtraModels` + `getSchemaPath`), porque Swagger no entiende genéricos de clase.
 
 ### Configuración
 
@@ -211,9 +213,9 @@ export class SupplierController {
 ## Checklist para un módulo nuevo
 
 1. `nest g resource <feature>` (o copiar la plantilla) y mover los archivos a `controllers/`, `services/`, `dto/`, `entities/`.
-2. Crear `constants/<feature>.errors.ts` con al menos `NOT_FOUND`, y `constants/<feature>.messages.ts` con un mensaje por acción.
+2. Crear `constants/<feature>.exception-response.ts` con al menos el mensaje `NOT_FOUND`, y `constants/<feature>.messages.ts` con un mensaje por acción.
 3. DTOs con `class-validator`; `UpdateDto extends PartialType(CreateDto)` desde `@nestjs/mapped-types`.
-4. Servicio que lanza `DomainException` y devuelve entidades.
+4. Servicio que lanza `DomainException(HttpStatus.X, <Feature>ExceptionResponse.Y)` y devuelve entidades.
 5. Controlador sin try/catch ni formato manual: `@ResponseMessage` en cada acción, `@HttpCode(HttpStatus.OK)` en cada consulta por `POST`.
 6. `TypeOrmModule.forFeature([Entity])` en el módulo; exportar el servicio solo si otro módulo lo usa.
 7. Registrar el módulo en `app.module.ts`.
