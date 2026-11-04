@@ -8,7 +8,7 @@ Licencia MIT: úsalas, cópialas y modifícalas sin pedir permiso.
 
 | Skill | Qué hace |
 |---|---|
-| [`andres-nestjs-architecture`](skills/andres-nestjs-architecture/SKILL.md) | Arquitectura y convenciones para APIs NestJS 12 (ESM + TypeORM + PostgreSQL): estructura de módulos, contrato de respuestas, catálogos de errores y mensajes, configuración validada. Incluye una [plantilla completa de módulo](skills/andres-nestjs-architecture/references/module-template.md) con CRUD. |
+| [`andres-nestjs-architecture`](skills/andres-nestjs-architecture/SKILL.md) | Arquitectura y convenciones para APIs NestJS 12 (ESM + TypeORM + PostgreSQL): estructura de módulos, rutas por acción (`getParams`, `getAll`, `create`, `update/:id`), contrato de respuestas, catálogos de errores y mensajes, paginación, descargas, autorización con `@Auth`, Swagger, sanitización de entradas y configuración validada. Escrita en inglés. Incluye una [plantilla completa de módulo](skills/andres-nestjs-architecture/references/module-template.md) con CRUD. |
 
 ## Instalación
 
