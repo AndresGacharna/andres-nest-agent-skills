@@ -275,7 +275,7 @@ export class SupplierController {
 
 ### Swagger
 
-- Docs are served at `/api/docs` outside production only: they expose every route and payload.
+- Docs are served at `/api/docs` outside production only: they expose every route and payload (see Environments).
 - DO: `@ApiTags` on the controller and `@ApiOperation({ summary, description })` on each handler; the description states what the filters match and the uniqueness rules (409s).
 - DO: Document the envelopes with the `common/decorators/api-responses.decorator.ts` helpers, because Swagger cannot read generic classes: `@ApiMessageResponse(status, Model?)` for actions, `@ApiPaginatedResponse(Model)` for `getAll`, `@ApiErrorResponses(...statuses)` for the error statuses the handler can answer.
 - DO: Every field of an entity that goes out, and of every DTO, has its `@ApiProperty` / `@ApiPropertyOptional`. A field with `@Exclude()` has none.
@@ -351,6 +351,22 @@ Three different risks, each solved in a different place. Do not mix them.
 - A new variable: add it to `EnvironmentVariables`, with an **explicit** type even when it has a default value (`PORT: number = 3033`), and to `.env.template`.
 - Read it with `config.get('VAR', { infer: true })` using `ConfigService<EnvironmentVariables, true>`.
 - Configuration of an external module: `forRootAsync({ inject: [ConfigService], useFactory })` with the factory in `src/config/`.
+
+### Environments (`NODE_ENV`)
+
+`NODE_ENV` is the `Environment` enum in `src/config/env.validation.ts`: `development`, `test` or `production`. When it is missing it defaults to `development`. No `package.json` script sets it (`start:prod` neither), so the value always comes from `.env` or from the deploy.
+
+| | `development` | `test` | `production` |
+| --- | --- | --- | --- |
+| Swagger at `/api/docs` (`main.ts`) | yes | yes | no: `404 Cannot GET /api/docs` |
+| TypeORM `synchronize` (`database.config.ts`) | on | off | off |
+
+- DO: `development` only on a local machine with its own database. `synchronize` rewrites the schema to match the entities on every start, and can drop columns with their data: never point it at a shared database.
+- DO: `test` for automated tests and any environment that needs the docs but must not touch the schema.
+- DO: `production` on every real deployment: it hides the docs, which expose every route and payload.
+- DO: Branch on the environment with the enum, read through `ConfigService`: `config.get('NODE_ENV', { infer: true }) !== Environment.Production`. DON'T: compare raw strings or read `process.env.NODE_ENV`.
+- DO: A combination that is invalid in one environment (a mail provider that only logs to the console, in `production`) is rejected in `validateEnv` after the class validation, so the API fails at startup instead of losing data at runtime.
+- Docs return 404 locally: the process started with `NODE_ENV=production`, usually left in `.env`. Change it and restart.
 
 ### Database
 
